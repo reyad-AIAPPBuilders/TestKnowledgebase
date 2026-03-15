@@ -1,8 +1,12 @@
 """
-POST /api/v1/parse — Parse a document from SMB or R2 source.
+POST /api/v1/parse — Parse a document from URL, SMB, or R2 source.
+POST /api/v1/parse/upload — Parse an uploaded document file.
 """
 
-from fastapi import APIRouter, Request
+import os
+import tempfile
+
+from fastapi import APIRouter, File, Request, UploadFile
 
 from app.models.common import ErrorCode, ResponseEnvelope
 from app.models.parse import ParseData, ParseRequest
@@ -17,15 +21,33 @@ router = APIRouter(prefix="/api/v1", tags=["Document Parsing"])
 @router.post(
     "/parse",
     summary="Parse a document",
-    description="Extract text, tables, and metadata from a document stored on SMB file shares or Cloudflare R2.\n\nSupported formats: **PDF**, **DOCX**, **DOC**, **PPTX**, **ODT** (via LlamaParse cloud or Unstructured local), **XLSX/XLS** (openpyxl), **TXT**, **CSV**, **HTML**, **RTF**.\n\n- **Cloud mode** (`LLAMA_CLOUD_API_KEY` set): Uses LlamaParse for high-quality document parsing\n- **Local mode** (no API key): Uses Unstructured library for local parsing\n\n- **SMB source**: Reads from a mounted file share path\n- **R2 source**: Downloads via pre-signed URL, then parses locally\n\n**Error codes:** `PARSE_FAILED`, `PARSE_ENCRYPTED`, `PARSE_CORRUPTED`, `PARSE_EMPTY`, `PARSE_TIMEOUT`, `PARSE_UNSUPPORTED_FORMAT`, `R2_FILE_NOT_FOUND`",
+    description="Extract text, tables, and metadata from a document.\n\n"
+    "**Sources:**\n"
+    "- **url**: Any public URL pointing to a document (PDF, DOCX, etc.) — the file is downloaded and parsed\n"
+    "- **smb**: Reads from a mounted file share path\n"
+    "- **r2**: Downloads via pre-signed URL from Cloudflare R2, then parses\n\n"
+    "**Supported formats:** PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF.\n\n"
+    "**Parser backends** (auto-selected at startup):\n"
+    "- **LlamaParse** (cloud) — `LLAMA_CLOUD_API_KEY` set → high-quality markdown extraction\n"
+    "- **Lightweight local** — no API key → PyMuPDF for PDF, python-docx for DOCX (no heavy dependencies)\n"
+    "- **SpreadsheetParser** — always used for XLSX/XLS\n"
+    "- **TextParser** — always used for TXT, CSV, HTML, RTF\n\n"
+    "**Error codes:** `PARSE_FAILED`, `PARSE_ENCRYPTED`, `PARSE_CORRUPTED`, `PARSE_EMPTY`, "
+    "`PARSE_TIMEOUT`, `PARSE_UNSUPPORTED_FORMAT`, `R2_FILE_NOT_FOUND`",
     response_description="Extracted text content with page count, language, and table count",
 )
 async def parse(body: ParseRequest, request: Request) -> ResponseEnvelope[ParseData]:
     request_id = request.state.request_id
     parser = request.app.state.parser
 
-    # For R2 sources, download via pre-signed URL then parse the local file
-    if body.source == "r2":
+    if body.source == "url":
+        # Download from public URL and parse
+        result = await parser.parse_from_url(
+            url=body.file_path,
+            mime_type=body.mime_type,
+        )
+
+    elif body.source == "r2":
         if not body.r2_presigned_url:
             return ResponseEnvelope(
                 success=False,
@@ -33,11 +55,11 @@ async def parse(body: ParseRequest, request: Request) -> ResponseEnvelope[ParseD
                 detail="r2_presigned_url is required when source is r2",
                 request_id=request_id,
             )
-
         result = await parser.parse_from_url(
             url=body.r2_presigned_url,
             mime_type=body.mime_type,
         )
+
     else:
         # SMB source — file_path is a local/mounted path
         result = await parser.parse_from_file(
@@ -46,6 +68,43 @@ async def parse(body: ParseRequest, request: Request) -> ResponseEnvelope[ParseD
             filename=body.file_path.rsplit("/", 1)[-1] if "/" in body.file_path else body.file_path,
         )
 
+    return _build_response(result, body.file_path, request_id)
+
+
+@router.post(
+    "/parse/upload",
+    summary="Parse an uploaded document",
+    description="Upload a document file directly and extract text, tables, and metadata.\n\n"
+    "Supports the same formats as `/parse`: PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF.",
+    response_description="Extracted text content with page count, language, and table count",
+)
+async def parse_upload(request: Request, file: UploadFile = File(...)) -> ResponseEnvelope[ParseData]:
+    request_id = request.state.request_id
+    parser = request.app.state.parser
+
+    # Save upload to temp file
+    suffix = os.path.splitext(file.filename or "")[1] or ""
+    fd, temp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        content = await file.read()
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+
+        result = await parser.parse_from_file(
+            file_path=temp_path,
+            mime_type=file.content_type,
+            filename=file.filename,
+        )
+
+        return _build_response(result, file.filename or "upload", request_id)
+
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def _build_response(result, file_path: str, request_id: str) -> ResponseEnvelope[ParseData]:
+    """Convert a ParseResult into the standard API response."""
     if result.status == ParseStatus.UNSUPPORTED:
         return ResponseEnvelope(
             success=False,
@@ -75,7 +134,7 @@ async def parse(body: ParseRequest, request: Request) -> ResponseEnvelope[ParseD
     return ResponseEnvelope(
         success=True,
         data=ParseData(
-            file_path=body.file_path,
+            file_path=file_path,
             content=content,
             pages=result.pages_parsed,
             language=result.metadata.language,

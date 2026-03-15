@@ -2,16 +2,20 @@ from pydantic import BaseModel, Field
 
 
 class ParseRequest(BaseModel):
-    """Request to parse a document from SMB file share or Cloudflare R2 storage."""
+    """Request to parse a document from a URL, SMB file share, or Cloudflare R2 storage."""
 
-    file_path: str = Field(..., description="SMB path (e.g. //server/share/doc.pdf) or R2 object key")
-    source: str = Field(..., description="Storage source: 'smb' (mounted file share) or 'r2' (Cloudflare R2)", pattern=r"^(smb|r2)$")
+    file_path: str = Field(..., description="Document URL, SMB path (e.g. //server/share/doc.pdf), or R2 object key")
+    source: str = Field(..., description="Storage source: 'url' (public URL), 'smb' (mounted file share), or 'r2' (Cloudflare R2)", pattern=r"^(url|smb|r2)$")
     r2_presigned_url: str | None = Field(None, description="Pre-signed download URL (required when source is 'r2')")
-    mime_type: str = Field(..., description="MIME type of the file (e.g. application/pdf)")
+    mime_type: str | None = Field(None, description="MIME type of the file (e.g. application/pdf). Auto-detected for URL source.")
 
     model_config = {
         "json_schema_extra": {
             "examples": [
+                {
+                    "file_path": "https://example.com/report.pdf",
+                    "source": "url",
+                },
                 {
                     "file_path": "//server/bauamt/dokumente/antrag_001.pdf",
                     "source": "smb",

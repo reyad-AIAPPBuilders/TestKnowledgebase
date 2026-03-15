@@ -2,8 +2,8 @@
 
 Parser selection strategy:
 - Cloud mode (LLAMA_CLOUD_API_KEY set): LlamaParse for PDF/DOCX/DOC/PPTX/ODT
-- Local mode (no API key):             Unstructured for PDF/DOCX/DOC/PPTX/ODT/RTF/HTML
-- Always:                               SpreadsheetParser for XLSX/XLS, TextParser for TXT/CSV
+- Local mode (no API key):             PyMuPDF for PDF, python-docx for DOCX (lightweight, no heavy deps)
+- Always:                               SpreadsheetParser for XLSX/XLS, TextParser for TXT/CSV/HTML/RTF
 """
 
 import os
@@ -60,12 +60,16 @@ class ParserService:
                 self._parsers[doc_type] = llama
             log.info("parser_service_started", backend="llamaparse", supported_types=list(self._parsers.keys()))
         else:
-            from app.services.parsing.parsers.unstructured_parser import UnstructuredParser
+            from app.services.parsing.parsers.docx_parser import DocxParser
+            from app.services.parsing.parsers.pdf_parser import PdfParser
 
-            unstructured = UnstructuredParser()
-            for doc_type in unstructured.supports():
-                self._parsers[doc_type] = unstructured
-            log.info("parser_service_started", backend="unstructured", supported_types=list(self._parsers.keys()))
+            pdf_parser = PdfParser()
+            docx_parser = DocxParser()
+            for doc_type in pdf_parser.supports():
+                self._parsers[doc_type] = pdf_parser
+            for doc_type in docx_parser.supports():
+                self._parsers[doc_type] = docx_parser
+            log.info("parser_service_started", backend="local", supported_types=list(self._parsers.keys()))
 
     async def shutdown(self) -> None:
         if self._http_client:
@@ -87,7 +91,7 @@ class ParserService:
 
     @property
     def parser_backend(self) -> str:
-        return "llamaparse" if self._use_llama else "unstructured"
+        return "llamaparse" if self._use_llama else "local"
 
     async def parse_from_url(self, url: str, mime_type: str | None = None) -> ParseResult:
         """Download a document from URL, detect type, parse, and return result."""

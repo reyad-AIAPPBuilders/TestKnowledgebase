@@ -1,4 +1,4 @@
-"""Tests for POST /api/v1/parse endpoint."""
+"""Tests for POST /api/v1/parse and POST /api/v1/parse/upload endpoints."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,6 +32,59 @@ def client(mock_parser):
     app.state.sitemap_parser = MagicMock()
     with TestClient(app) as c:
         yield c
+
+
+def test_parse_url_success(client, mock_parser):
+    mock_parser.parse_from_url.return_value = ParseResult(
+        status=ParseStatus.SUCCESS,
+        document_type=DocumentType.PDF,
+        text="Parsed content from URL",
+        metadata=DocumentMetadata(page_count=2, word_count=4, language="en"),
+        pages_parsed=2,
+        pages_failed=0,
+    )
+
+    response = client.post("/api/v1/parse", json={
+        "file_path": "https://example.com/report.pdf",
+        "source": "url",
+    })
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["content"] == "Parsed content from URL"
+    assert data["data"]["pages"] == 2
+    assert data["data"]["content_length"] == 23
+    assert data["request_id"]
+
+    mock_parser.parse_from_url.assert_called_once_with(
+        url="https://example.com/report.pdf",
+        mime_type=None,
+    )
+
+
+def test_parse_url_with_mime_type(client, mock_parser):
+    mock_parser.parse_from_url.return_value = ParseResult(
+        status=ParseStatus.SUCCESS,
+        document_type=DocumentType.DOCX,
+        text="DOCX from URL",
+        metadata=DocumentMetadata(word_count=3),
+        pages_parsed=1,
+        pages_failed=0,
+    )
+
+    response = client.post("/api/v1/parse", json={
+        "file_path": "https://example.com/doc",
+        "source": "url",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    })
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    mock_parser.parse_from_url.assert_called_once_with(
+        url="https://example.com/doc",
+        mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
 
 def test_parse_smb_success(client, mock_parser):
@@ -221,3 +274,43 @@ def test_parse_invalid_source(client):
         "mime_type": "text/plain",
     })
     assert response.status_code == 422
+
+
+def test_parse_upload_success(client, mock_parser):
+    mock_parser.parse_from_file.return_value = ParseResult(
+        status=ParseStatus.SUCCESS,
+        document_type=DocumentType.PDF,
+        text="Uploaded PDF content",
+        metadata=DocumentMetadata(word_count=3, language="en"),
+        pages_parsed=1,
+        pages_failed=0,
+    )
+
+    response = client.post(
+        "/api/v1/parse/upload",
+        files={"file": ("test.pdf", b"%PDF-fake-content", "application/pdf")},
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert data["data"]["content"] == "Uploaded PDF content"
+    assert data["data"]["file_path"] == "test.pdf"
+
+
+def test_parse_upload_empty_content(client, mock_parser):
+    mock_parser.parse_from_file.return_value = ParseResult(
+        status=ParseStatus.SUCCESS,
+        document_type=DocumentType.TXT,
+        text="",
+        metadata=DocumentMetadata(),
+        pages_parsed=1,
+    )
+
+    response = client.post(
+        "/api/v1/parse/upload",
+        files={"file": ("empty.txt", b"", "text/plain")},
+    )
+    data = response.json()
+    assert data["success"] is False
+    assert data["error"] == "PARSE_EMPTY"
