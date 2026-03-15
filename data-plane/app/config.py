@@ -73,7 +73,7 @@ class ExternalSettings(BaseSettings):
     rate_limit_window: int = 60
 
     # ClickHouse
-    clickhouse_required: bool = True
+    clickhouse_required: bool = False
     clickhouse_host: str = "clickhouse"
     clickhouse_port: int = 9000
     clickhouse_db: str = "ki2_audit"
