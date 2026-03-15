@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(for file:*)",
+      "Bash(do echo:*)",
+      "Read(//d/KI Quadrat/TestKnowledgebase/**)",
+      "Bash(done)",
+      "Bash(cd:*)"
+    ]
+  }
+}
