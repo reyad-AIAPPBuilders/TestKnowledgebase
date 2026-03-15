@@ -105,7 +105,7 @@ tags_metadata = [
     {
         "name": "Health",
         "description": "Liveness and readiness probes for container orchestrators and load balancers. "
-        "The `/ready` endpoint checks connectivity to Qdrant, BGE-M3, Parser (LlamaParse or Unstructured), Crawl4AI, LDAP, and Redis.",
+        "The `/ready` endpoint checks connectivity to Qdrant, BGE-M3, Parser (LlamaParse or local), Crawl4AI, LDAP, and Redis.",
     },
     {
         "name": "Metrics",
@@ -122,11 +122,16 @@ tags_metadata = [
     },
     {
         "name": "Document Parsing",
-        "description": "Extract text, tables, and metadata from documents.\n\n"
+        "description": "Extract text, tables, and metadata from documents via URL, file upload, SMB, or R2.\n\n"
+        "**Input methods:**\n"
+        "- `POST /parse` with `source: url` — parse any public document URL\n"
+        "- `POST /parse/upload` — upload a file directly\n"
+        "- `POST /parse` with `source: smb` — parse from mounted file share\n"
+        "- `POST /parse` with `source: r2` — parse from Cloudflare R2 via presigned URL\n\n"
         "**Supported formats:** PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF.\n\n"
         "**Parser backends** (auto-selected at startup):\n"
-        "- **LlamaParse** (cloud) — `LLAMA_CLOUD_API_KEY` set → uploads to LlamaCloud API for high-quality markdown extraction\n"
-        "- **Unstructured** (local) — no API key → runs entirely locally, ideal for on-premise deployments\n"
+        "- **LlamaParse** (cloud) — `LLAMA_CLOUD_API_KEY` set → high-quality markdown extraction via LlamaCloud API\n"
+        "- **Local parsers** (no API key) — PyMuPDF for PDF, python-docx for DOCX — lightweight, no heavy dependencies\n"
         "- **SpreadsheetParser** — always used for XLSX/XLS (openpyxl)\n"
         "- **TextParser** — always used for TXT, CSV, HTML, RTF",
     },
@@ -171,19 +176,36 @@ app = FastAPI(
     title="KI² Data Plane",
     description=(
         "Unified ingestion, embedding, and permission-aware search for municipality RAG pipelines.\n\n"
+        "## Two Operational Modes\n\n"
+        "### 1. Online Mode — Knowledgebase from Web Content\n"
+        "Update the knowledgebase using online URLs and cloud services:\n"
+        "- **Scrape** web pages via Crawl4AI, discover URLs from sitemaps\n"
+        "- **Parse** documents from any public URL (`source: url`) — uses **LlamaParse** (cloud) for high-quality extraction\n"
+        "- **Ingest** scraped/parsed content into Qdrant vector collections\n"
+        "- Requires: `CRAWL4AI_URL`, `LLAMA_CLOUD_API_KEY` (optional), `OPENAI_API_KEY` (for classification)\n\n"
+        "### 2. Local Mode — Fully Offline Document Processing\n"
+        "Process documents entirely locally without any third-party APIs:\n"
+        "- **Upload** documents directly via `POST /parse/upload` or read from **SMB file shares** / **local drives**\n"
+        "- **Parse** locally using **PyMuPDF** (PDF) and **python-docx** (DOCX) — lightweight, no GPU or heavy dependencies\n"
+        "- **Discover** files from SMB shares with NTFS ACL extraction\n"
+        "- Requires: No external API keys — only Qdrant and BGE-M3 for embedding/search\n\n"
         "## Authentication\n"
         "All endpoints (except `/health`) require HMAC-SHA256 authentication via:\n"
         "- `X-Signature`: HMAC-SHA256 of `timestamp.body`\n"
         "- `X-Timestamp`: Unix epoch seconds (must be within ±5 min)\n\n"
+        "Set `DP_HMAC_SECRET` to enable. Leave empty to disable authentication.\n\n"
         "## Pipeline Flow\n"
         "1. **Discover** → Scan file sources (SMB shares, Cloudflare R2) for new/changed documents\n"
-        "2. **Scrape / Parse** → Extract text content from web pages (Crawl4AI) or files (LlamaParse / Unstructured)\n"
+        "2. **Scrape / Parse** → Extract text from web pages (Crawl4AI) or documents (URL, upload, SMB, R2)\n"
         "3. **Ingest** → Chunk, classify, embed (BGE-M3), and store in Qdrant with ACL + metadata\n"
         "4. **Search** → Permission-filtered semantic search across collections\n\n"
         "## Document Parsing\n"
-        "Two parsing backends are available, selected automatically at startup:\n"
-        "- **LlamaParse** (cloud) — when `LLAMA_CLOUD_API_KEY` is set. High-quality parsing for PDF, DOCX, DOC, PPTX, ODT via the LlamaCloud API.\n"
-        "- **Unstructured** (local) — when no API key is set. Runs entirely locally for on-premise deployments.\n\n"
+        "**Input methods:** public URL, file upload, SMB path, or R2 presigned URL.\n\n"
+        "**Parser backends** (auto-selected at startup):\n"
+        "- **LlamaParse** (cloud) — when `LLAMA_CLOUD_API_KEY` is set. High-quality markdown extraction.\n"
+        "- **Local parsers** (no API key) — PyMuPDF for PDF, python-docx for DOCX. Lightweight, no heavy dependencies.\n"
+        "- **SpreadsheetParser** — always used for XLSX/XLS.\n"
+        "- **TextParser** — always used for TXT, CSV, HTML, RTF.\n\n"
         "## Multi-Tenant Collections\n"
         "Every **ingest**, **search**, **delete**, and **update-acl** request requires a `collection_name` field.\n"
         "Collections are created via `POST /api/v1/collections/init` and represent a municipality/tenant.\n\n"
