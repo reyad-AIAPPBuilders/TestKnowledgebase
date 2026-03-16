@@ -6,13 +6,13 @@ from app.models.common import NtfsACL
 class DiscoverRequest(BaseModel):
     """Request to scan file sources for new, changed, or unchanged documents.
 
-    This is the first step in every ingestion pipeline. It scans SMB shares or
+    This is the first step in every local ingestion pipeline. It scans SMB shares or
     R2 buckets, reads NTFS permissions, computes SHA-256 hashes, and returns
     what changed since the last scan. Does NOT parse or embed.
     """
 
-    source: str = Field(..., description="Storage source: 'smb' (file share), 'r2' (Cloudflare R2), or 'url' (website)", pattern=r"^(smb|r2|url)$")
-    paths: list[str] = Field(..., min_length=1, description="SMB share paths, R2 key prefixes, or website URLs to scan")
+    source: str = Field(..., description="Storage source: 'smb' (file share) or 'r2' (Cloudflare R2)", pattern=r"^(smb|r2)$")
+    paths: list[str] = Field(..., min_length=1, description="SMB share paths or R2 key prefixes to scan")
     since_hash_map: dict[str, str] = Field(
         default_factory=dict,
         description="Map of file_path to last known SHA-256 hash. Files with matching hashes are marked as 'unchanged'.",

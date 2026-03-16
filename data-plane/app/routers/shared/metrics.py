@@ -2,7 +2,7 @@ from fastapi import APIRouter, Response
 
 from app.services.metrics import render_metrics
 
-router = APIRouter(tags=["metrics"])
+router = APIRouter(tags=["Metrics"])
 
 
 @router.get("/metrics")

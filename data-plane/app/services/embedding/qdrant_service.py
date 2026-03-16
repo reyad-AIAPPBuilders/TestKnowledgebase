@@ -175,6 +175,41 @@ class QdrantService:
         log.info("qdrant_delete", collection=collection, source_id=source_id, deleted=count)
         return count
 
+    async def delete_by_filter(
+        self,
+        collection: str,
+        qdrant_filter: dict,
+    ) -> int:
+        """Delete points matching an arbitrary Qdrant filter. Returns estimated count deleted."""
+        if not self._client:
+            raise QdrantError("Qdrant client not initialized")
+
+        # Count before deleting
+        count = 0
+        try:
+            resp = await self._client.post(
+                f"/collections/{collection}/points/count",
+                json={"filter": qdrant_filter, "exact": True},
+            )
+            resp.raise_for_status()
+            count = resp.json().get("result", {}).get("count", 0)
+        except Exception:
+            pass
+
+        try:
+            resp = await self._client.post(
+                f"/collections/{collection}/points/delete",
+                json={"filter": qdrant_filter},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise QdrantError(f"Delete failed: {e.response.text}") from e
+        except httpx.RequestError as e:
+            raise QdrantError(f"Qdrant connection failed: {e}") from e
+
+        log.info("qdrant_delete_by_filter", collection=collection, deleted=count)
+        return count
+
     async def update_payload(
         self,
         collection: str,

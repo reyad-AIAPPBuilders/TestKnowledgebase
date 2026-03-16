@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     default_top_k: int = 10
     default_score_threshold: float = 0.5
 
+    # Online API key security
+    online_api_keys: str = ""  # Comma-separated valid API keys for online endpoints
+
     # Logging
     log_level: str = "info"
     log_json: bool = True

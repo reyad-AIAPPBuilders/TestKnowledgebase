@@ -1,4 +1,4 @@
-"""Tests for POST /api/v1/discover endpoint and discovery services."""
+"""Tests for POST /api/v1/local/discover endpoint and discovery services."""
 
 import os
 import tempfile
@@ -63,7 +63,7 @@ def test_discover_smb_success(client, mock_discovery):
     ]
     mock_discovery.discover.return_value = _make_result(files)
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "smb",
         "paths": ["//server/bauamt"],
     })
@@ -105,7 +105,7 @@ def test_discover_with_hash_map(client, mock_discovery):
     }
     mock_discovery.discover.return_value = _make_result(files, since_map)
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "smb",
         "paths": ["//server"],
         "since_hash_map": since_map,
@@ -130,7 +130,7 @@ def test_discover_r2_success(client, mock_discovery):
     ]
     mock_discovery.discover.return_value = _make_result(files)
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "r2",
         "paths": ["tenant/uploads/"],
     })
@@ -145,7 +145,7 @@ def test_discover_smb_path_not_found(client, mock_discovery):
         "Path not found: //server/missing", code="SMB_PATH_NOT_FOUND"
     )
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "smb",
         "paths": ["//server/missing"],
     })
@@ -159,7 +159,7 @@ def test_discover_smb_auth_failed(client, mock_discovery):
         "Access denied", code="SMB_AUTH_FAILED"
     )
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "smb",
         "paths": ["//server/restricted"],
     })
@@ -173,7 +173,7 @@ def test_discover_r2_connection_failed(client, mock_discovery):
         "R2 connection failed", code="R2_CONNECTION_FAILED"
     )
 
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "r2",
         "paths": ["tenant/uploads/"],
     })
@@ -184,7 +184,7 @@ def test_discover_r2_connection_failed(client, mock_discovery):
 
 def test_discover_invalid_source(client):
     """Pydantic should reject invalid source values."""
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "ftp",
         "paths": ["/some/path"],
     })
@@ -193,7 +193,7 @@ def test_discover_invalid_source(client):
 
 def test_discover_empty_paths(client):
     """Pydantic should reject empty paths list."""
-    response = client.post("/api/v1/discover", json={
+    response = client.post("/api/v1/local/discover", json={
         "source": "smb",
         "paths": [],
     })
@@ -204,7 +204,7 @@ def test_discover_request_id(client, mock_discovery):
     mock_discovery.discover.return_value = _make_result([])
 
     response = client.post(
-        "/api/v1/discover",
+        "/api/v1/local/discover",
         json={"source": "smb", "paths": ["//server/test"]},
         headers={"X-Request-ID": "disc-req-555"},
     )

@@ -1,4 +1,4 @@
-"""Tests for POST /api/v1/ingest endpoint."""
+"""Tests for POST /api/v1/local/ingest endpoint."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -70,7 +70,7 @@ def test_ingest_success(client, mock_ingest):
         total_time_ms=300,
     )
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     assert response.status_code == 200
 
     data = response.json()
@@ -98,7 +98,7 @@ def test_ingest_with_chunking_config(client, mock_ingest):
         total_time_ms=400,
     )
 
-    response = client.post("/api/v1/ingest", json=_make_request(
+    response = client.post("/api/v1/local/ingest", json=_make_request(
         source_id="doc_xyz",
         chunking={"strategy": "sentence", "max_chunk_size": 256, "overlap": 25},
     ))
@@ -114,22 +114,22 @@ def test_ingest_with_chunking_config(client, mock_ingest):
 
 
 def test_ingest_empty_content(client):
-    response = client.post("/api/v1/ingest", json=_make_request(content="   "))
+    response = client.post("/api/v1/local/ingest", json=_make_request(content="   "))
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "VALIDATION_EMPTY_CONTENT"
 
 
 def test_ingest_empty_content_pydantic(client):
-    """min_length=1 in IngestRequest should reject empty string."""
-    response = client.post("/api/v1/ingest", json=_make_request(content=""))
+    """min_length=1 in LocalIngestRequest should reject empty string."""
+    response = client.post("/api/v1/local/ingest", json=_make_request(content=""))
     assert response.status_code == 422
 
 
 def test_ingest_embedding_failed(client, mock_ingest):
     mock_ingest.ingest.side_effect = IngestError("BGE-M3 connection error", code="EMBEDDING_FAILED")
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "EMBEDDING_FAILED"
@@ -138,7 +138,7 @@ def test_ingest_embedding_failed(client, mock_ingest):
 def test_ingest_embedding_oom(client, mock_ingest):
     mock_ingest.ingest.side_effect = IngestError("Out of memory", code="EMBEDDING_OOM")
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "EMBEDDING_OOM"
@@ -147,7 +147,7 @@ def test_ingest_embedding_oom(client, mock_ingest):
 def test_ingest_qdrant_upsert_failed(client, mock_ingest):
     mock_ingest.ingest.side_effect = IngestError("Upsert failed", code="QDRANT_UPSERT_FAILED")
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "QDRANT_UPSERT_FAILED"
@@ -156,7 +156,7 @@ def test_ingest_qdrant_upsert_failed(client, mock_ingest):
 def test_ingest_qdrant_collection_not_found(client, mock_ingest):
     mock_ingest.ingest.side_effect = IngestError("Collection missing", code="QDRANT_COLLECTION_NOT_FOUND")
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "QDRANT_COLLECTION_NOT_FOUND"
@@ -165,7 +165,7 @@ def test_ingest_qdrant_collection_not_found(client, mock_ingest):
 def test_ingest_qdrant_disk_full(client, mock_ingest):
     mock_ingest.ingest.side_effect = IngestError("Disk full", code="QDRANT_DISK_FULL")
 
-    response = client.post("/api/v1/ingest", json=_make_request())
+    response = client.post("/api/v1/local/ingest", json=_make_request())
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "QDRANT_DISK_FULL"
@@ -173,7 +173,7 @@ def test_ingest_qdrant_disk_full(client, mock_ingest):
 
 def test_ingest_invalid_visibility(client):
     """Pydantic should reject invalid ACL visibility."""
-    response = client.post("/api/v1/ingest", json=_make_request(
+    response = client.post("/api/v1/local/ingest", json=_make_request(
         acl={"allow_groups": [], "deny_groups": [], "visibility": "secret"},
     ))
     assert response.status_code == 422
@@ -192,7 +192,7 @@ def test_ingest_request_id(client, mock_ingest):
     )
 
     response = client.post(
-        "/api/v1/ingest",
+        "/api/v1/local/ingest",
         json=_make_request(source_id="doc_test"),
         headers={"X-Request-ID": "ingest-req-999"},
     )

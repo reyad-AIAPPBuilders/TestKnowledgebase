@@ -44,3 +44,48 @@ class UpdateACLData(BaseModel):
 
     source_id: str = Field(..., description="Document ID whose vectors were updated")
     vectors_updated: int = Field(..., description="Number of vectors with updated ACL payload")
+
+
+class MetadataFilter(BaseModel):
+    """A single metadata filter condition."""
+
+    key: str = Field(..., description="Metadata field name (e.g. 'source_type', 'classification', 'acl_department', 'organization_id')")
+    value: str = Field(..., description="Exact value to match")
+
+
+class DeleteByFilterRequest(BaseModel):
+    """Request to delete vectors matching metadata filters.
+
+    All filters are combined with AND logic — only points matching every
+    condition are deleted.
+    """
+
+    collection_name: str = Field(..., description="Qdrant collection name")
+    filters: list[MetadataFilter] = Field(..., min_length=1, description="Metadata conditions (AND logic). At least one filter is required.")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "collection_name": "wiener-neudorf",
+                    "filters": [
+                        {"key": "source_type", "value": "smb"},
+                        {"key": "acl_department", "value": "bauamt"},
+                    ],
+                },
+                {
+                    "collection_name": "wiener-neudorf",
+                    "filters": [
+                        {"key": "classification", "value": "funding"},
+                    ],
+                },
+            ]
+        }
+    }
+
+
+class DeleteByFilterData(BaseModel):
+    """Result of deleting vectors by metadata filter."""
+
+    vectors_deleted: int = Field(..., description="Number of vectors removed from Qdrant")
+    filters_applied: list[MetadataFilter] = Field(..., description="Filters that were used")

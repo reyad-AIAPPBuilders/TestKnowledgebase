@@ -1,19 +1,19 @@
 """
-POST /api/v1/scrape — Scrape a single webpage (Crawl4AI)
-POST /api/v1/crawl  — Discover URLs from site/sitemap
+POST /api/v1/online/scrape — Scrape a single webpage (Crawl4AI)
+POST /api/v1/online/crawl  — Discover URLs from site/sitemap
 """
 
 from fastapi import APIRouter, Request
 
 from app.models.common import ErrorCode, ResponseEnvelope
-from app.models.scrape import CrawlData, CrawlRequest, CrawlUrl, ScrapeData, ScrapeRequest
+from app.models.online.scrape import CrawlData, CrawlRequest, CrawlUrl, ScrapeData, ScrapeRequest
 from app.services.scraping.document_discovery import document_type
 from app.services.scraping.scraper_service import ScrapeOptions, ScrapeStatus
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["Web Scraping"])
+router = APIRouter(prefix="/api/v1/online", tags=["Online - Web Scraping"])
 
 
 def _validate_url(url: str) -> str | None:
@@ -29,7 +29,7 @@ def _validate_url(url: str) -> str | None:
 @router.post(
     "/scrape",
     summary="Scrape a single webpage",
-    description="Scrape a webpage using Crawl4AI (with JavaScript rendering) and return the extracted content as Markdown. Includes title, language detection, and link discovery. Results are cached in Redis.\n\n**Error codes:** `VALIDATION_URL_INVALID`, `SCRAPE_FAILED`, `SCRAPE_BLOCKED`, `SCRAPE_TIMEOUT`, `SCRAPE_EMPTY`, `SCRAPE_ROBOTS_BLOCKED`",
+    description="Scrape a webpage using Crawl4AI (with JavaScript rendering) and return the extracted content as Markdown. Includes title, language detection, and link discovery. Results are cached in Redis.\n\n**Optional X-API-Key header** — required only when `DP_ONLINE_API_KEYS` is configured.\n\n**Error codes:** `VALIDATION_URL_INVALID`, `SCRAPE_FAILED`, `SCRAPE_BLOCKED`, `SCRAPE_TIMEOUT`, `SCRAPE_EMPTY`, `SCRAPE_ROBOTS_BLOCKED`",
     response_description="Scraped page content as Markdown with metadata",
 )
 async def scrape(body: ScrapeRequest, request: Request) -> ResponseEnvelope[ScrapeData]:
@@ -84,7 +84,7 @@ async def scrape(body: ScrapeRequest, request: Request) -> ResponseEnvelope[Scra
 @router.post(
     "/crawl",
     summary="Discover URLs from a website",
-    description="Discover all URLs on a website using either sitemap parsing or BFS link crawling.\n\n- **sitemap**: Parse XML sitemaps (including nested sitemaps and robots.txt sitemap references)\n- **crawl**: Follow links via breadth-first search up to `max_depth` levels\n\nEach URL is classified as either `page` (HTML) or `document` (PDF, DOCX, etc.).\n\n**Error codes:** `VALIDATION_URL_INVALID`, `CRAWL_SITEMAP_NOT_FOUND`",
+    description="Discover all URLs on a website using either sitemap parsing or BFS link crawling.\n\n- **sitemap**: Parse XML sitemaps (including nested sitemaps and robots.txt sitemap references)\n- **crawl**: Follow links via breadth-first search up to `max_depth` levels\n\nEach URL is classified as either `page` (HTML) or `document` (PDF, DOCX, etc.).\n\n**Optional X-API-Key header** — required only when `DP_ONLINE_API_KEYS` is configured.\n\n**Error codes:** `VALIDATION_URL_INVALID`, `CRAWL_SITEMAP_NOT_FOUND`",
     response_description="List of discovered URLs with type classification",
 )
 async def crawl(body: CrawlRequest, request: Request) -> ResponseEnvelope[CrawlData]:

@@ -1,4 +1,4 @@
-"""Tests for POST /api/v1/parse and POST /api/v1/parse/upload endpoints."""
+"""Tests for POST /api/v1/local/parse, POST /api/v1/local/parse/upload, and POST /api/v1/online/parse endpoints."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,9 +44,8 @@ def test_parse_url_success(client, mock_parser):
         pages_failed=0,
     )
 
-    response = client.post("/api/v1/parse", json={
-        "file_path": "https://example.com/report.pdf",
-        "source": "url",
+    response = client.post("/api/v1/online/parse", json={
+        "url": "https://example.com/report.pdf",
     })
     assert response.status_code == 200
 
@@ -73,9 +72,8 @@ def test_parse_url_with_mime_type(client, mock_parser):
         pages_failed=0,
     )
 
-    response = client.post("/api/v1/parse", json={
-        "file_path": "https://example.com/doc",
-        "source": "url",
+    response = client.post("/api/v1/online/parse", json={
+        "url": "https://example.com/doc",
         "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     })
     assert response.status_code == 200
@@ -98,7 +96,7 @@ def test_parse_smb_success(client, mock_parser):
         pages_failed=0,
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/report.pdf",
         "source": "smb",
         "mime_type": "application/pdf",
@@ -126,7 +124,7 @@ def test_parse_r2_success(client, mock_parser):
         pages_failed=0,
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "tenant/docs/file.docx",
         "source": "r2",
         "r2_presigned_url": "https://r2.example.com/presigned/file.docx?token=abc",
@@ -140,7 +138,7 @@ def test_parse_r2_success(client, mock_parser):
 
 
 def test_parse_r2_missing_presigned_url(client):
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "tenant/docs/file.docx",
         "source": "r2",
         "mime_type": "application/pdf",
@@ -159,7 +157,7 @@ def test_parse_unsupported_format(client, mock_parser):
         error="Unsupported document type: unknown",
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/file.xyz",
         "source": "smb",
         "mime_type": "application/octet-stream",
@@ -176,7 +174,7 @@ def test_parse_failed(client, mock_parser):
         error="Parser error: failed to read file",
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/broken.pdf",
         "source": "smb",
         "mime_type": "application/pdf",
@@ -193,7 +191,7 @@ def test_parse_encrypted_pdf(client, mock_parser):
         error="Parser error: encrypted PDF requires password",
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/secret.pdf",
         "source": "smb",
         "mime_type": "application/pdf",
@@ -212,7 +210,7 @@ def test_parse_empty_content(client, mock_parser):
         pages_parsed=1,
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/blank.pdf",
         "source": "smb",
         "mime_type": "application/pdf",
@@ -232,7 +230,7 @@ def test_parse_partial_success(client, mock_parser):
         pages_failed=2,
     )
 
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/docs/partial.pdf",
         "source": "smb",
         "mime_type": "application/pdf",
@@ -253,7 +251,7 @@ def test_parse_request_id(client, mock_parser):
     )
 
     response = client.post(
-        "/api/v1/parse",
+        "/api/v1/local/parse",
         json={
             "file_path": "/mnt/share/test.txt",
             "source": "smb",
@@ -268,7 +266,7 @@ def test_parse_request_id(client, mock_parser):
 
 def test_parse_invalid_source(client):
     """Pydantic should reject invalid source values."""
-    response = client.post("/api/v1/parse", json={
+    response = client.post("/api/v1/local/parse", json={
         "file_path": "/mnt/share/test.txt",
         "source": "ftp",
         "mime_type": "text/plain",
@@ -287,7 +285,7 @@ def test_parse_upload_success(client, mock_parser):
     )
 
     response = client.post(
-        "/api/v1/parse/upload",
+        "/api/v1/local/parse/upload",
         files={"file": ("test.pdf", b"%PDF-fake-content", "application/pdf")},
     )
     assert response.status_code == 200
@@ -308,7 +306,7 @@ def test_parse_upload_empty_content(client, mock_parser):
     )
 
     response = client.post(
-        "/api/v1/parse/upload",
+        "/api/v1/local/parse/upload",
         files={"file": ("empty.txt", b"", "text/plain")},
     )
     data = response.json()

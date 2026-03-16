@@ -1,4 +1,4 @@
-"""Tests for POST /api/v1/scrape and POST /api/v1/crawl endpoints."""
+"""Tests for POST /api/v1/online/scrape and POST /api/v1/online/crawl endpoints."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -48,7 +48,7 @@ def test_scrape_success(client, mock_scraper):
         discovered_links=["https://example.gv.at/other"],
     )
 
-    response = client.post("/api/v1/scrape", json={"url": "https://example.gv.at/page"})
+    response = client.post("/api/v1/online/scrape", json={"url": "https://example.gv.at/page"})
     assert response.status_code == 200
 
     data = response.json()
@@ -61,7 +61,7 @@ def test_scrape_success(client, mock_scraper):
 
 
 def test_scrape_invalid_url(client):
-    response = client.post("/api/v1/scrape", json={"url": "not-a-url"})
+    response = client.post("/api/v1/online/scrape", json={"url": "not-a-url"})
     assert response.status_code == 200
 
     data = response.json()
@@ -77,7 +77,7 @@ def test_scrape_empty_content(client, mock_scraper):
         metadata=PageMetadata(),
     )
 
-    response = client.post("/api/v1/scrape", json={"url": "https://example.gv.at/empty"})
+    response = client.post("/api/v1/online/scrape", json={"url": "https://example.gv.at/empty"})
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "SCRAPE_EMPTY"
@@ -90,7 +90,7 @@ def test_scrape_failed(client, mock_scraper):
         error="Connection refused",
     )
 
-    response = client.post("/api/v1/scrape", json={"url": "https://example.gv.at/fail"})
+    response = client.post("/api/v1/online/scrape", json={"url": "https://example.gv.at/fail"})
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "SCRAPE_FAILED"
@@ -103,7 +103,7 @@ def test_scrape_timeout(client, mock_scraper):
         error="Timed out",
     )
 
-    response = client.post("/api/v1/scrape", json={"url": "https://example.gv.at/slow"})
+    response = client.post("/api/v1/online/scrape", json={"url": "https://example.gv.at/slow"})
     data = response.json()
     assert data["success"] is False
     assert data["error"] == "SCRAPE_TIMEOUT"
@@ -116,7 +116,7 @@ def test_crawl_sitemap(client, mock_sitemap_parser):
         "https://example.gv.at/files/doc.pdf",
     ]
 
-    response = client.post("/api/v1/crawl", json={
+    response = client.post("/api/v1/online/crawl", json={
         "url": "https://example.gv.at/sitemap.xml",
         "method": "sitemap",
     })
@@ -137,7 +137,7 @@ def test_crawl_sitemap(client, mock_sitemap_parser):
 def test_crawl_sitemap_not_found(client, mock_sitemap_parser):
     mock_sitemap_parser.parse.return_value = []
 
-    response = client.post("/api/v1/crawl", json={
+    response = client.post("/api/v1/online/crawl", json={
         "url": "https://example.gv.at/sitemap.xml",
         "method": "sitemap",
     })
@@ -152,7 +152,7 @@ def test_crawl_bfs(client, mock_scraper):
         [DiscoveredDocument(url="https://example.gv.at/doc.pdf", type="pdf")],
     )
 
-    response = client.post("/api/v1/crawl", json={
+    response = client.post("/api/v1/online/crawl", json={
         "url": "https://example.gv.at",
         "method": "crawl",
         "max_depth": 2,
@@ -167,7 +167,7 @@ def test_crawl_bfs(client, mock_scraper):
 
 
 def test_crawl_invalid_url(client):
-    response = client.post("/api/v1/crawl", json={
+    response = client.post("/api/v1/online/crawl", json={
         "url": "ftp://bad",
         "method": "sitemap",
     })
@@ -185,7 +185,7 @@ def test_request_id_in_scrape_response(client, mock_scraper):
     )
 
     response = client.post(
-        "/api/v1/scrape",
+        "/api/v1/online/scrape",
         json={"url": "https://example.gv.at"},
         headers={"X-Request-ID": "test-req-123"},
     )

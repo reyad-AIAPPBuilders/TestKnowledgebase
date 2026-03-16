@@ -1,18 +1,25 @@
 """
-DELETE /api/v1/vectors/{source_id} — Remove all vectors for a document
-PUT    /api/v1/vectors/update-acl   — Update ACL on existing vectors
+DELETE /api/v1/local/vectors/{source_id}      — Remove all vectors for a document
+POST   /api/v1/local/vectors/delete-by-filter — Remove vectors matching metadata filters
+PUT    /api/v1/local/vectors/update-acl       — Update ACL on existing vectors
 """
 
 from fastapi import APIRouter, Query, Request
 
 from app.models.common import ErrorCode, ResponseEnvelope
-from app.models.vectors import DeleteVectorsData, UpdateACLData, UpdateACLRequest
+from app.models.local.vectors import (
+    DeleteByFilterData,
+    DeleteByFilterRequest,
+    DeleteVectorsData,
+    UpdateACLData,
+    UpdateACLRequest,
+)
 from app.services.embedding.qdrant_service import QdrantError
 from app.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["Vector Management"])
+router = APIRouter(prefix="/api/v1/local", tags=["Local - Vector Management"])
 
 
 @router.delete(
@@ -56,6 +63,66 @@ async def delete_vectors(
     return ResponseEnvelope(
         success=True,
         data=DeleteVectorsData(source_id=source_id, vectors_deleted=deleted),
+        request_id=request_id,
+    )
+
+
+@router.post(
+    "/vectors/delete-by-filter",
+    summary="Delete vectors by metadata filter",
+    description=(
+        "Delete all vector points matching the given metadata filters from the specified Qdrant collection.\n\n"
+        "All filters are combined with **AND** logic — only points matching every condition are deleted.\n\n"
+        "**Filterable metadata fields:**\n"
+        "- `source_id` — Document ID\n"
+        "- `source_type` — Origin type (`smb`, `r2`, `web`)\n"
+        "- `classification` — Content category (`funding`, `event`, `policy`, etc.)\n"
+        "- `acl_visibility` — Visibility level (`public`, `internal`, `restricted`)\n"
+        "- `acl_department` — Department tag\n"
+        "- `organization_id` — Organization/tenant ID\n"
+        "- `department` — Department from metadata\n"
+        "- `language` — Document language\n"
+        "- `uploaded_by` — Uploader ID\n"
+        "- `mime_type` — File MIME type\n"
+        "- `title` — Document title\n\n"
+        "**Error codes:** `QDRANT_CONNECTION_FAILED`, `QDRANT_DELETE_FAILED`"
+    ),
+    response_description="Deletion confirmation with count of removed vectors and filters applied",
+)
+async def delete_by_filter(body: DeleteByFilterRequest, request: Request) -> ResponseEnvelope[DeleteByFilterData]:
+    request_id = request.state.request_id
+    qdrant = request.app.state.qdrant
+
+    # Build Qdrant filter from metadata conditions
+    must_conditions = [
+        {"key": f.key, "match": {"value": f.value}}
+        for f in body.filters
+    ]
+    qdrant_filter = {"must": must_conditions}
+
+    try:
+        deleted = await qdrant.delete_by_filter(body.collection_name, qdrant_filter)
+    except QdrantError as e:
+        error_msg = str(e).lower()
+        error_code = (
+            ErrorCode.QDRANT_CONNECTION_FAILED
+            if "connection" in error_msg
+            else ErrorCode.QDRANT_DELETE_FAILED
+        )
+        log.error("vectors_delete_by_filter_failed", error=str(e), filters=[f.model_dump() for f in body.filters])
+        return ResponseEnvelope(
+            success=False,
+            error=error_code,
+            detail=str(e),
+            request_id=request_id,
+        )
+
+    return ResponseEnvelope(
+        success=True,
+        data=DeleteByFilterData(
+            vectors_deleted=deleted,
+            filters_applied=body.filters,
+        ),
         request_id=request_id,
     )
 

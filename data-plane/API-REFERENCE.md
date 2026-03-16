@@ -24,18 +24,22 @@ http://localhost:8000/api/v1
 ### 1. Online Mode — Knowledgebase from Web Content
 Update the knowledgebase using online URLs and cloud services.
 - Scrape web pages via Crawl4AI
-- Parse documents from any public URL (`source: "url"`) — uses LlamaParse (cloud)
+- Parse documents from any public URL — uses LlamaParse (cloud)
+- All online endpoints live under `/api/v1/online/`
 - Requires: `CRAWL4AI_URL`, `LLAMA_CLOUD_API_KEY`, `OPENAI_API_KEY`
 
 ### 2. Local Mode — Fully Offline Document Processing
 Process documents entirely locally without any third-party APIs.
-- Upload documents via `POST /parse/upload` or read from SMB file shares
+- Upload documents via `POST /api/v1/local/parse/upload` or read from SMB file shares
 - Parse locally with PyMuPDF (PDF) + python-docx (DOCX) — lightweight, no GPU needed
+- All local endpoints live under `/api/v1/local/`
 - Requires: Only Qdrant + BGE-M3
 
 ---
 
 ## Authentication
+
+### HMAC Authentication (global)
 
 All endpoints except `/health` and `/ready` require HMAC-SHA256 authentication (when `DP_HMAC_SECRET` is set).
 
@@ -44,7 +48,19 @@ All endpoints except `/health` and `/ready` require HMAC-SHA256 authentication (
 | `X-Signature` | HMAC-SHA256 of `{timestamp}.{request_body}` |
 | `X-Timestamp` | Unix epoch seconds (must be within ±5 min) |
 
-Leave `DP_HMAC_SECRET` empty to disable authentication.
+Leave `DP_HMAC_SECRET` empty to disable HMAC authentication.
+
+### API Key Authentication (online endpoints only)
+
+All `/api/v1/online/*` endpoints require an `X-API-Key` header. Valid keys are configured via the `DP_ONLINE_API_KEYS` environment variable.
+
+| Header | Description |
+|--------|-------------|
+| `X-API-Key` | API key for online endpoint access (configured via `DP_ONLINE_API_KEYS` env var) |
+
+Local endpoints (`/api/v1/local/*`) do **not** require an API key — they are designed for trusted network access.
+
+> **Note:** If both `DP_HMAC_SECRET` and `DP_ONLINE_API_KEYS` are set, online endpoints require **both** HMAC and API key headers.
 
 ---
 
@@ -78,7 +94,9 @@ All responses include an `X-Request-ID` header. Send `X-Request-ID` in your requ
 
 ---
 
-# Health & Status
+# Shared Endpoints
+
+These endpoints are not scoped to online or local mode.
 
 ## `GET /api/v1/health`
 
@@ -136,430 +154,6 @@ Prometheus-compatible metrics with `dp_` prefix. Returns `text/plain`.
 
 ---
 
-# Document Parsing
-
-## `POST /api/v1/parse`
-
-Extract text, tables, and metadata from a document. Accepts three sources: public URL, SMB file share, or Cloudflare R2.
-
-**Supported formats:** PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF
-
-**Parser backends (auto-selected at startup):**
-- **LlamaParse** (cloud) — when `LLAMA_CLOUD_API_KEY` is set
-- **Local parsers** (no API key) — PyMuPDF for PDF, python-docx for DOCX
-- **SpreadsheetParser** — always used for XLSX/XLS
-- **TextParser** — always used for TXT, CSV, HTML, RTF
-
-### Case 1: Parse from URL (Online Mode)
-
-**Request:**
-```json
-{
-  "file_path": "https://pdfobject.com/pdf/sample.pdf",
-  "source": "url"
-}
-```
-
-`mime_type` is optional — auto-detected from the URL.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "file_path": "https://pdfobject.com/pdf/sample.pdf",
-    "content": "This is a simple PDF file. Fun fun fun...",
-    "pages": 2,
-    "language": "en",
-    "extracted_tables": 0,
-    "content_length": 1234
-  },
-  "request_id": "5786ede5-7631-46f2-8e6b-0c48f8564274"
-}
-```
-
-### Case 2: Parse from URL with explicit MIME type
-
-**Request:**
-```json
-{
-  "file_path": "https://example.com/download?id=123",
-  "source": "url",
-  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-}
-```
-
-### Case 3: Parse from SMB file share (Local Mode)
-
-**Request:**
-```json
-{
-  "file_path": "//server/bauamt/dokumente/antrag_001.pdf",
-  "source": "smb",
-  "mime_type": "application/pdf"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "file_path": "//server/bauamt/dokumente/antrag_001.pdf",
-    "content": "Bauantrag Nr. 2024-001\nAntragsteller: Max Mustermann...",
-    "pages": 12,
-    "language": "de",
-    "extracted_tables": 2,
-    "content_length": 15420
-  },
-  "request_id": "..."
-}
-```
-
-### Case 4: Parse from Cloudflare R2
-
-**Request:**
-```json
-{
-  "file_path": "tenant/wiener-neudorf/uploads/report.docx",
-  "source": "r2",
-  "r2_presigned_url": "https://r2.example.com/presigned/report.docx?token=abc123",
-  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-}
-```
-
-### Case 5: Parse error — encrypted PDF
-
-**Response:**
-```json
-{
-  "success": false,
-  "data": null,
-  "error": "PARSE_ENCRYPTED",
-  "detail": "Parser error: encrypted PDF requires password",
-  "request_id": "..."
-}
-```
-
-### Case 6: Parse error — empty document
-
-**Response:**
-```json
-{
-  "success": false,
-  "data": null,
-  "error": "PARSE_EMPTY",
-  "detail": "Document contained no extractable text",
-  "request_id": "..."
-}
-```
-
-### Case 7: Parse error — unsupported format
-
-**Response:**
-```json
-{
-  "success": false,
-  "data": null,
-  "error": "PARSE_UNSUPPORTED_FORMAT",
-  "detail": "Unsupported document type: unknown",
-  "request_id": "..."
-}
-```
-
-### Case 8: Parse error — R2 missing presigned URL
-
-**Request:**
-```json
-{
-  "file_path": "tenant/docs/file.docx",
-  "source": "r2",
-  "mime_type": "application/pdf"
-}
-```
-
-**Response:**
-```json
-{
-  "success": false,
-  "data": null,
-  "error": "R2_FILE_NOT_FOUND",
-  "detail": "r2_presigned_url is required when source is r2",
-  "request_id": "..."
-}
-```
-
-### Request fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `file_path` | string | Yes | Document URL, SMB path, or R2 object key |
-| `source` | string | Yes | `url`, `smb`, or `r2` |
-| `mime_type` | string | No | MIME type. Auto-detected for URL source. |
-| `r2_presigned_url` | string | Conditional | Required when `source` is `r2` |
-
-### Error codes
-`PARSE_FAILED`, `PARSE_ENCRYPTED`, `PARSE_CORRUPTED`, `PARSE_EMPTY`, `PARSE_TIMEOUT`, `PARSE_UNSUPPORTED_FORMAT`, `R2_FILE_NOT_FOUND`
-
----
-
-## `POST /api/v1/parse/upload`
-
-Upload a document file directly for parsing. Uses `multipart/form-data`.
-
-**Request (cURL):**
-```bash
-curl -X POST "https://your-domain/api/v1/parse/upload" \
-  -F "file=@/path/to/document.pdf"
-```
-
-**Request (Swagger UI):** Click "Try it out", choose a file, and execute.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "file_path": "document.pdf",
-    "content": "Extracted text content from the uploaded PDF...",
-    "pages": 5,
-    "language": "de",
-    "extracted_tables": 1,
-    "content_length": 8500
-  },
-  "request_id": "..."
-}
-```
-
----
-
-# Web Scraping
-
-## `POST /api/v1/scrape`
-
-Scrape a single webpage using Crawl4AI with JavaScript rendering. Results are cached in Redis.
-
-**Request:**
-```json
-{
-  "url": "https://www.wiener-neudorf.gv.at/foerderungen"
-}
-```
-
-**Response (success):**
-```json
-{
-  "success": true,
-  "data": {
-    "url": "https://www.wiener-neudorf.gv.at/foerderungen",
-    "title": "Förderungen - Gemeinde Wiener Neudorf",
-    "content": "# Förderungen\n\nDie Gemeinde Wiener Neudorf bietet folgende Förderungen an...",
-    "content_length": 5200,
-    "language": "de",
-    "links_found": 45,
-    "last_modified": null
-  },
-  "request_id": "..."
-}
-```
-
-**Response (invalid URL):**
-```json
-{
-  "success": false,
-  "error": "VALIDATION_URL_INVALID",
-  "detail": "URL must start with http:// or https://",
-  "request_id": "..."
-}
-```
-
-**Response (empty page):**
-```json
-{
-  "success": false,
-  "error": "SCRAPE_EMPTY",
-  "detail": "Page returned no extractable content",
-  "request_id": "..."
-}
-```
-
-**Response (timeout):**
-```json
-{
-  "success": false,
-  "error": "SCRAPE_TIMEOUT",
-  "detail": "Request timed out after 30s",
-  "request_id": "..."
-}
-```
-
-### Error codes
-`VALIDATION_URL_INVALID`, `SCRAPE_FAILED`, `SCRAPE_BLOCKED`, `SCRAPE_TIMEOUT`, `SCRAPE_EMPTY`, `SCRAPE_ROBOTS_BLOCKED`
-
----
-
-## `POST /api/v1/crawl`
-
-Discover URLs from a website. Returns URLs only — does not scrape content.
-
-### Case 1: Sitemap discovery
-
-**Request:**
-```json
-{
-  "url": "https://www.wiener-neudorf.gv.at/sitemap.xml",
-  "method": "sitemap",
-  "max_urls": 500
-}
-```
-
-### Case 2: BFS crawl discovery
-
-**Request:**
-```json
-{
-  "url": "https://www.wiener-neudorf.gv.at",
-  "method": "crawl",
-  "max_depth": 3,
-  "max_urls": 100
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "base_url": "https://www.wiener-neudorf.gv.at",
-    "method_used": "sitemap",
-    "total_urls": 234,
-    "urls": [
-      {
-        "url": "https://www.wiener-neudorf.gv.at/gemeindeamt/kontakt/",
-        "type": "page",
-        "last_modified": null
-      },
-      {
-        "url": "https://www.wiener-neudorf.gv.at/files/foerderung.pdf",
-        "type": "document",
-        "last_modified": null
-      }
-    ]
-  },
-  "request_id": "..."
-}
-```
-
-**Response (no sitemap found):**
-```json
-{
-  "success": false,
-  "error": "CRAWL_SITEMAP_NOT_FOUND",
-  "detail": "No URLs found in sitemap",
-  "request_id": "..."
-}
-```
-
-### Request fields
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `url` | string | Yes | — | Base URL or sitemap URL |
-| `method` | string | Yes | — | `sitemap` or `crawl` |
-| `max_depth` | int | No | 3 | Max link-following depth (1-5) |
-| `max_urls` | int | No | 500 | Max URLs to return (1-5000) |
-
-### Error codes
-`VALIDATION_URL_INVALID`, `CRAWL_SITEMAP_NOT_FOUND`
-
----
-
-# File Discovery
-
-## `POST /api/v1/discover`
-
-Scan SMB file shares or R2 buckets for new/changed documents. First step in every ingestion pipeline — does NOT parse or embed. Returns NTFS ACLs, SHA-256 hashes, and change status.
-
-### Case 1: SMB file share scan
-
-**Request:**
-```json
-{
-  "source": "smb",
-  "paths": ["//server/abteilung/dokumente", "//server/bauamt"],
-  "since_hash_map": {
-    "//server/abteilung/dokumente/antrag.pdf": "sha256:abc123def456..."
-  }
-}
-```
-
-### Case 2: R2 bucket scan
-
-**Request:**
-```json
-{
-  "source": "r2",
-  "paths": ["tenant/wiener-neudorf/uploads/"],
-  "since_hash_map": {}
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "total_files": 523,
-    "new_files": 12,
-    "changed_files": 3,
-    "unchanged_files": 508,
-    "files": [
-      {
-        "path": "//server/bauamt/antrag_001.pdf",
-        "file_hash": "sha256:abc123...",
-        "size_bytes": 245000,
-        "mime_type": "application/pdf",
-        "last_modified": "2025-03-01T10:30:00Z",
-        "status": "new",
-        "acl": {
-          "source": "ntfs",
-          "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter"],
-          "deny_groups": ["DOMAIN\\Praktikanten"],
-          "allow_users": [],
-          "inherited": true
-        }
-      }
-    ]
-  },
-  "request_id": "..."
-}
-```
-
-**Response (path not found):**
-```json
-{
-  "success": false,
-  "error": "SMB_PATH_NOT_FOUND",
-  "detail": "Share path //server/invalid not found",
-  "request_id": "..."
-}
-```
-
-### Request fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `source` | string | Yes | `smb`, `r2`, or `url` |
-| `paths` | array | Yes | SMB paths, R2 prefixes, or URLs to scan |
-| `since_hash_map` | object | No | `{file_path: last_known_hash}` — matching hashes are skipped |
-
-### Error codes
-`SMB_CONNECTION_FAILED`, `SMB_AUTH_FAILED`, `SMB_PATH_NOT_FOUND`, `R2_CONNECTION_FAILED`, `R2_FILE_NOT_FOUND`, `LDAP_CONNECTION_FAILED`, `VALIDATION_PATH_OUTSIDE_ROOTS`
-
----
-
-# Content Intelligence
-
 ## `POST /api/v1/classify`
 
 Classify content into 9 categories and extract structured entities. Designed for German-language municipality documents.
@@ -609,7 +203,7 @@ Classify content into 9 categories and extract structured entities. Designed for
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `content` | string | Yes | — | Text to classify (from `/parse` or `/scrape`) |
+| `content` | string | Yes | — | Text to classify (from `/online/parse`, `/local/parse`, or `/online/scrape`) |
 | `language` | string | No | `de` | ISO 639-1 language code |
 
 ### Extracted entities
@@ -626,150 +220,6 @@ Classify content into 9 categories and extract structured entities. Designed for
 `VALIDATION_EMPTY_CONTENT`, `CLASSIFY_FAILED`, `CLASSIFY_LOW_CONFIDENCE`, `ENTITY_EXTRACTION_FAILED`
 
 ---
-
-# Ingestion Pipeline
-
-## `POST /api/v1/ingest`
-
-The core RAG pipeline endpoint. Takes parsed text + ACL and runs: **chunk → classify → embed (BGE-M3) → store (Qdrant)**.
-
-- Multi-tenant: specify `collection_name`
-- Idempotent: re-ingesting the same `source_id` replaces old vectors
-- Every document MUST have an ACL with `visibility` set
-
-**Request:**
-```json
-{
-  "collection_name": "wiener-neudorf",
-  "source_id": "doc_abc123",
-  "file_path": "//server/bauamt/antrag_001.pdf",
-  "content": "Bauantrag Nr. 2024-001\nAntragsteller: Max Mustermann\n\nDer Antrag auf Errichtung eines Einfamilienhauses...",
-  "language": "de",
-  "acl": {
-    "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter"],
-    "deny_groups": ["DOMAIN\\Praktikanten"],
-    "allow_roles": [],
-    "allow_users": [],
-    "department": "bauamt",
-    "visibility": "internal"
-  },
-  "metadata": {
-    "title": "Bauantrag 2024-001",
-    "uploaded_by": "moderator_01",
-    "source_type": "smb",
-    "mime_type": "application/pdf",
-    "organization_id": "org_wiener_neudorf",
-    "department": "bauamt"
-  },
-  "chunking": {
-    "strategy": "late_chunking",
-    "max_chunk_size": 512,
-    "overlap": 50
-  }
-}
-```
-
-**Response (success):**
-```json
-{
-  "success": true,
-  "data": {
-    "source_id": "doc_abc123",
-    "chunks_created": 8,
-    "vectors_stored": 8,
-    "collection": "wiener-neudorf",
-    "classification": "policy",
-    "entities_extracted": {
-      "dates": 3,
-      "contacts": 1,
-      "amounts": 0
-    },
-    "embedding_time_ms": 1250,
-    "total_time_ms": 3500
-  },
-  "request_id": "..."
-}
-```
-
-**Response (empty content):**
-```json
-{
-  "success": false,
-  "error": "VALIDATION_EMPTY_CONTENT",
-  "detail": "Content must not be empty",
-  "request_id": "..."
-}
-```
-
-**Response (embedding OOM):**
-```json
-{
-  "success": false,
-  "error": "EMBEDDING_OOM",
-  "detail": "BGE-M3 out of memory — reduce chunk size or content length",
-  "request_id": "..."
-}
-```
-
-**Response (collection not found):**
-```json
-{
-  "success": false,
-  "error": "QDRANT_COLLECTION_NOT_FOUND",
-  "detail": "Collection 'wiener-neudorf' does not exist. Create it first via POST /collections/init",
-  "request_id": "..."
-}
-```
-
-### Request fields
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `collection_name` | string | Yes | — | Qdrant collection to store in |
-| `source_id` | string | Yes | — | Unique document ID (for updates/deletes) |
-| `file_path` | string | Yes | — | Original file path or URL |
-| `content` | string | Yes | — | Parsed text from `/parse` or `/scrape` |
-| `language` | string | No | auto-detect | ISO 639-1 language code |
-| `acl` | object | Yes | — | Access control list (see below) |
-| `metadata` | object | Yes | — | Document metadata (see below) |
-| `chunking` | object | No | defaults | Chunking configuration (see below) |
-
-### ACL object
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `visibility` | string | Yes | `public`, `internal`, or `restricted` |
-| `allow_groups` | array | No | AD groups with access |
-| `deny_groups` | array | No | AD groups explicitly denied |
-| `allow_roles` | array | No | Portal roles with access |
-| `allow_users` | array | No | Specific user IDs |
-| `department` | string | No | Department tag |
-
-### Metadata object
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `title` | string | No | Document title (shown in search results) |
-| `uploaded_by` | string | No | User or service that uploaded |
-| `source_type` | string | No | `smb`, `r2`, or `web` |
-| `mime_type` | string | No | Original file MIME type |
-| `organization_id` | string | No | Organization/tenant ID |
-| `department` | string | No | Department within organization |
-
-### Chunking config
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `strategy` | string | `late_chunking` | `late_chunking` (paragraph-aware), `sentence`, or `fixed` |
-| `max_chunk_size` | int | 512 | Max chunk size in chars (64-4096) |
-| `overlap` | int | 50 | Overlap between chunks in chars (0-512) |
-
-### Error codes
-`VALIDATION_EMPTY_CONTENT`, `VALIDATION_ACL_REQUIRED`, `EMBEDDING_MODEL_NOT_LOADED`, `EMBEDDING_FAILED`, `EMBEDDING_OOM`, `QDRANT_CONNECTION_FAILED`, `QDRANT_COLLECTION_NOT_FOUND`, `QDRANT_UPSERT_FAILED`, `QDRANT_DISK_FULL`, `CLASSIFY_FAILED`
-
----
-
-# Semantic Search
 
 ## `POST /api/v1/search`
 
@@ -906,83 +356,6 @@ Permission-aware semantic search. **No search is ever unfiltered** — every req
 
 ---
 
-# Vector Management
-
-## `DELETE /api/v1/vectors/{source_id}`
-
-Remove all vectors for a document from a Qdrant collection.
-
-**Request:**
-```
-DELETE /api/v1/vectors/doc_abc123?collection_name=wiener-neudorf
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "source_id": "doc_abc123",
-    "vectors_deleted": 8
-  },
-  "request_id": "..."
-}
-```
-
-**Response (connection failed):**
-```json
-{
-  "success": false,
-  "error": "QDRANT_CONNECTION_FAILED",
-  "detail": "Failed to connect to Qdrant",
-  "request_id": "..."
-}
-```
-
-### Error codes
-`QDRANT_CONNECTION_FAILED`, `QDRANT_DELETE_FAILED`
-
----
-
-## `PUT /api/v1/vectors/update-acl`
-
-Update ACL permissions on existing vectors without re-embedding. Used when file permissions change on the source system.
-
-**Request:**
-```json
-{
-  "collection_name": "wiener-neudorf",
-  "source_id": "doc_abc123",
-  "acl": {
-    "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter", "DOMAIN\\Neue-Gruppe"],
-    "deny_groups": [],
-    "allow_roles": [],
-    "allow_users": [],
-    "department": "bauamt",
-    "visibility": "internal"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "source_id": "doc_abc123",
-    "vectors_updated": 8
-  },
-  "request_id": "..."
-}
-```
-
-### Error codes
-`QDRANT_CONNECTION_FAILED`, `QDRANT_UPSERT_FAILED`
-
----
-
-# Collection Management
-
 ## `POST /api/v1/collections/init`
 
 Create a Qdrant vector collection for a municipality tenant. If the collection already exists, returns `created: false` without error.
@@ -1079,25 +452,856 @@ GET /api/v1/collections/stats?collection_name=wiener-neudorf
 
 ---
 
+# Online Endpoints
+
+All online endpoints require the `X-API-Key` header (configured via `DP_ONLINE_API_KEYS` env var). These endpoints handle web content and cloud-based document processing.
+
+## `POST /api/v1/online/scrape`
+
+Scrape a single webpage using Crawl4AI with JavaScript rendering. Results are cached in Redis.
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/online/scrape" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url": "https://www.wiener-neudorf.gv.at/foerderungen"
+  }'
+```
+
+**Request body:**
+```json
+{
+  "url": "https://www.wiener-neudorf.gv.at/foerderungen"
+}
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://www.wiener-neudorf.gv.at/foerderungen",
+    "title": "Förderungen - Gemeinde Wiener Neudorf",
+    "content": "# Förderungen\n\nDie Gemeinde Wiener Neudorf bietet folgende Förderungen an...",
+    "content_length": 5200,
+    "language": "de",
+    "links_found": 45,
+    "last_modified": null
+  },
+  "request_id": "..."
+}
+```
+
+**Response (invalid URL):**
+```json
+{
+  "success": false,
+  "error": "VALIDATION_URL_INVALID",
+  "detail": "URL must start with http:// or https://",
+  "request_id": "..."
+}
+```
+
+**Response (empty page):**
+```json
+{
+  "success": false,
+  "error": "SCRAPE_EMPTY",
+  "detail": "Page returned no extractable content",
+  "request_id": "..."
+}
+```
+
+**Response (timeout):**
+```json
+{
+  "success": false,
+  "error": "SCRAPE_TIMEOUT",
+  "detail": "Request timed out after 30s",
+  "request_id": "..."
+}
+```
+
+### Error codes
+`VALIDATION_URL_INVALID`, `SCRAPE_FAILED`, `SCRAPE_BLOCKED`, `SCRAPE_TIMEOUT`, `SCRAPE_EMPTY`, `SCRAPE_ROBOTS_BLOCKED`
+
+---
+
+## `POST /api/v1/online/crawl`
+
+Discover URLs from a website. Returns URLs only — does not scrape content.
+
+### Case 1: Sitemap discovery
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/online/crawl" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url": "https://www.wiener-neudorf.gv.at/sitemap.xml",
+    "method": "sitemap",
+    "max_urls": 500
+  }'
+```
+
+### Case 2: BFS crawl discovery
+
+**Request:**
+```json
+{
+  "url": "https://www.wiener-neudorf.gv.at",
+  "method": "crawl",
+  "max_depth": 3,
+  "max_urls": 100
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "base_url": "https://www.wiener-neudorf.gv.at",
+    "method_used": "sitemap",
+    "total_urls": 234,
+    "urls": [
+      {
+        "url": "https://www.wiener-neudorf.gv.at/gemeindeamt/kontakt/",
+        "type": "page",
+        "last_modified": null
+      },
+      {
+        "url": "https://www.wiener-neudorf.gv.at/files/foerderung.pdf",
+        "type": "document",
+        "last_modified": null
+      }
+    ]
+  },
+  "request_id": "..."
+}
+```
+
+**Response (no sitemap found):**
+```json
+{
+  "success": false,
+  "error": "CRAWL_SITEMAP_NOT_FOUND",
+  "detail": "No URLs found in sitemap",
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `url` | string | Yes | — | Base URL or sitemap URL |
+| `method` | string | Yes | — | `sitemap` or `crawl` |
+| `max_depth` | int | No | 3 | Max link-following depth (1-5) |
+| `max_urls` | int | No | 500 | Max URLs to return (1-5000) |
+
+### Error codes
+`VALIDATION_URL_INVALID`, `CRAWL_SITEMAP_NOT_FOUND`
+
+---
+
+## `POST /api/v1/online/parse`
+
+Parse a document from a public URL. Uses LlamaParse (cloud) when `LLAMA_CLOUD_API_KEY` is set, otherwise falls back to local parsers.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/online/parse" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url": "https://pdfobject.com/pdf/sample.pdf"
+  }'
+```
+
+**Request body:**
+```json
+{
+  "url": "https://pdfobject.com/pdf/sample.pdf"
+}
+```
+
+`mime_type` is optional — auto-detected from the URL.
+
+**Request with explicit MIME type:**
+```json
+{
+  "url": "https://example.com/download?id=123",
+  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "file_path": "https://pdfobject.com/pdf/sample.pdf",
+    "content": "This is a simple PDF file. Fun fun fun...",
+    "pages": 2,
+    "language": "en",
+    "extracted_tables": 0,
+    "content_length": 1234
+  },
+  "request_id": "5786ede5-7631-46f2-8e6b-0c48f8564274"
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Public URL of the document to parse |
+| `mime_type` | string | No | MIME type. Auto-detected from URL if omitted. |
+
+### Error codes
+`PARSE_FAILED`, `PARSE_ENCRYPTED`, `PARSE_CORRUPTED`, `PARSE_EMPTY`, `PARSE_TIMEOUT`, `PARSE_UNSUPPORTED_FORMAT`
+
+---
+
+## `POST /api/v1/online/ingest`
+
+The RAG pipeline endpoint for web content. Takes parsed text and runs: **chunk -> classify -> embed (BGE-M3) -> store (Qdrant)**.
+
+Uses `url` instead of `file_path` to identify the source.
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/online/ingest" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "collection_name": "wiener-neudorf",
+    "source_id": "web_foerderungen_001",
+    "url": "https://www.wiener-neudorf.gv.at/foerderungen",
+    "content": "Die Gemeinde Wiener Neudorf bietet folgende Förderungen an...",
+    "language": "de",
+    "acl": {
+      "allow_groups": [],
+      "deny_groups": [],
+      "allow_roles": [],
+      "allow_users": [],
+      "department": "",
+      "visibility": "public"
+    },
+    "metadata": {
+      "title": "Förderungen - Gemeinde Wiener Neudorf",
+      "source_type": "web",
+      "organization_id": "org_wiener_neudorf"
+    }
+  }'
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "source_id": "web_foerderungen_001",
+    "chunks_created": 4,
+    "vectors_stored": 4,
+    "collection": "wiener-neudorf",
+    "classification": "funding",
+    "entities_extracted": {
+      "dates": 2,
+      "contacts": 1,
+      "amounts": 1
+    },
+    "embedding_time_ms": 850,
+    "total_time_ms": 2100
+  },
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `collection_name` | string | Yes | — | Qdrant collection to store in |
+| `source_id` | string | Yes | — | Unique document ID (for updates/deletes) |
+| `url` | string | Yes | — | Source URL of the web content |
+| `content` | string | Yes | — | Parsed text from `/online/scrape` or `/online/parse` |
+| `language` | string | No | auto-detect | ISO 639-1 language code |
+| `acl` | object | Yes | — | Access control list (see ACL object below) |
+| `metadata` | object | Yes | — | Document metadata (see Metadata object below) |
+| `chunking` | object | No | defaults | Chunking configuration (see Chunking config below) |
+
+### Error codes
+`VALIDATION_EMPTY_CONTENT`, `VALIDATION_ACL_REQUIRED`, `EMBEDDING_MODEL_NOT_LOADED`, `EMBEDDING_FAILED`, `EMBEDDING_OOM`, `QDRANT_CONNECTION_FAILED`, `QDRANT_COLLECTION_NOT_FOUND`, `QDRANT_UPSERT_FAILED`, `QDRANT_DISK_FULL`, `CLASSIFY_FAILED`
+
+---
+
+# Local Endpoints
+
+Local endpoints do **not** require an `X-API-Key` header. They are designed for trusted network environments (on-premise, internal network).
+
+## `POST /api/v1/local/parse`
+
+Parse a document from an SMB file share or Cloudflare R2 bucket. Uses local parsers: PyMuPDF for PDF, python-docx for DOCX, SpreadsheetParser for XLSX/XLS, TextParser for TXT/CSV/HTML/RTF.
+
+**Supported formats:** PDF, DOCX, DOC, PPTX, ODT, XLSX, XLS, TXT, CSV, HTML, RTF
+
+### Case 1: Parse from SMB file share
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/local/parse" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "//server/bauamt/dokumente/antrag_001.pdf",
+    "source": "smb",
+    "mime_type": "application/pdf"
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "file_path": "//server/bauamt/dokumente/antrag_001.pdf",
+    "content": "Bauantrag Nr. 2024-001\nAntragsteller: Max Mustermann...",
+    "pages": 12,
+    "language": "de",
+    "extracted_tables": 2,
+    "content_length": 15420
+  },
+  "request_id": "..."
+}
+```
+
+### Case 2: Parse from Cloudflare R2
+
+**Request:**
+```json
+{
+  "file_path": "tenant/wiener-neudorf/uploads/report.docx",
+  "source": "r2",
+  "r2_presigned_url": "https://r2.example.com/presigned/report.docx?token=abc123",
+  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+}
+```
+
+### Parse error examples
+
+**Encrypted PDF:**
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "PARSE_ENCRYPTED",
+  "detail": "Parser error: encrypted PDF requires password",
+  "request_id": "..."
+}
+```
+
+**Empty document:**
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "PARSE_EMPTY",
+  "detail": "Document contained no extractable text",
+  "request_id": "..."
+}
+```
+
+**Unsupported format:**
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "PARSE_UNSUPPORTED_FORMAT",
+  "detail": "Unsupported document type: unknown",
+  "request_id": "..."
+}
+```
+
+**R2 missing presigned URL:**
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "R2_FILE_NOT_FOUND",
+  "detail": "r2_presigned_url is required when source is r2",
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file_path` | string | Yes | SMB path or R2 object key |
+| `source` | string | Yes | `smb` or `r2` |
+| `mime_type` | string | No | MIME type (recommended for SMB/R2) |
+| `r2_presigned_url` | string | Conditional | Required when `source` is `r2` |
+
+### Error codes
+`PARSE_FAILED`, `PARSE_ENCRYPTED`, `PARSE_CORRUPTED`, `PARSE_EMPTY`, `PARSE_TIMEOUT`, `PARSE_UNSUPPORTED_FORMAT`, `R2_FILE_NOT_FOUND`
+
+---
+
+## `POST /api/v1/local/parse/upload`
+
+Upload a document file directly for parsing. Uses `multipart/form-data`.
+
+**Request (cURL):**
+```bash
+curl -X POST "https://your-domain/api/v1/local/parse/upload" \
+  -F "file=@/path/to/document.pdf"
+```
+
+**Request (Swagger UI):** Click "Try it out", choose a file, and execute.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "file_path": "document.pdf",
+    "content": "Extracted text content from the uploaded PDF...",
+    "pages": 5,
+    "language": "de",
+    "extracted_tables": 1,
+    "content_length": 8500
+  },
+  "request_id": "..."
+}
+```
+
+---
+
+## `POST /api/v1/local/discover`
+
+Scan SMB file shares or R2 buckets for new/changed documents. First step in every ingestion pipeline — does NOT parse or embed. Returns NTFS ACLs, SHA-256 hashes, and change status.
+
+### Case 1: SMB file share scan
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/local/discover" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "smb",
+    "paths": ["//server/abteilung/dokumente", "//server/bauamt"],
+    "since_hash_map": {
+      "//server/abteilung/dokumente/antrag.pdf": "sha256:abc123def456..."
+    }
+  }'
+```
+
+### Case 2: R2 bucket scan
+
+**Request:**
+```json
+{
+  "source": "r2",
+  "paths": ["tenant/wiener-neudorf/uploads/"],
+  "since_hash_map": {}
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "total_files": 523,
+    "new_files": 12,
+    "changed_files": 3,
+    "unchanged_files": 508,
+    "files": [
+      {
+        "path": "//server/bauamt/antrag_001.pdf",
+        "file_hash": "sha256:abc123...",
+        "size_bytes": 245000,
+        "mime_type": "application/pdf",
+        "last_modified": "2025-03-01T10:30:00Z",
+        "status": "new",
+        "acl": {
+          "source": "ntfs",
+          "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter"],
+          "deny_groups": ["DOMAIN\\Praktikanten"],
+          "allow_users": [],
+          "inherited": true
+        }
+      }
+    ]
+  },
+  "request_id": "..."
+}
+```
+
+**Response (path not found):**
+```json
+{
+  "success": false,
+  "error": "SMB_PATH_NOT_FOUND",
+  "detail": "Share path //server/invalid not found",
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source` | string | Yes | `smb`, `r2`, or `url` |
+| `paths` | array | Yes | SMB paths, R2 prefixes, or URLs to scan |
+| `since_hash_map` | object | No | `{file_path: last_known_hash}` — matching hashes are skipped |
+
+### Error codes
+`SMB_CONNECTION_FAILED`, `SMB_AUTH_FAILED`, `SMB_PATH_NOT_FOUND`, `R2_CONNECTION_FAILED`, `R2_FILE_NOT_FOUND`, `LDAP_CONNECTION_FAILED`, `VALIDATION_PATH_OUTSIDE_ROOTS`
+
+---
+
+## `POST /api/v1/local/ingest`
+
+The core RAG pipeline endpoint for local documents. Takes parsed text + ACL and runs: **chunk -> classify -> embed (BGE-M3) -> store (Qdrant)**.
+
+- Multi-tenant: specify `collection_name`
+- Idempotent: re-ingesting the same `source_id` replaces old vectors
+- Every document MUST have an ACL with `visibility` set
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/local/ingest" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "wiener-neudorf",
+    "source_id": "doc_abc123",
+    "file_path": "//server/bauamt/antrag_001.pdf",
+    "content": "Bauantrag Nr. 2024-001\nAntragsteller: Max Mustermann\n\nDer Antrag auf Errichtung eines Einfamilienhauses...",
+    "language": "de",
+    "acl": {
+      "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter"],
+      "deny_groups": ["DOMAIN\\Praktikanten"],
+      "allow_roles": [],
+      "allow_users": [],
+      "department": "bauamt",
+      "visibility": "internal"
+    },
+    "metadata": {
+      "title": "Bauantrag 2024-001",
+      "uploaded_by": "moderator_01",
+      "source_type": "smb",
+      "mime_type": "application/pdf",
+      "organization_id": "org_wiener_neudorf",
+      "department": "bauamt"
+    },
+    "chunking": {
+      "strategy": "late_chunking",
+      "max_chunk_size": 512,
+      "overlap": 50
+    }
+  }'
+```
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "data": {
+    "source_id": "doc_abc123",
+    "chunks_created": 8,
+    "vectors_stored": 8,
+    "collection": "wiener-neudorf",
+    "classification": "policy",
+    "entities_extracted": {
+      "dates": 3,
+      "contacts": 1,
+      "amounts": 0
+    },
+    "embedding_time_ms": 1250,
+    "total_time_ms": 3500
+  },
+  "request_id": "..."
+}
+```
+
+**Response (empty content):**
+```json
+{
+  "success": false,
+  "error": "VALIDATION_EMPTY_CONTENT",
+  "detail": "Content must not be empty",
+  "request_id": "..."
+}
+```
+
+**Response (embedding OOM):**
+```json
+{
+  "success": false,
+  "error": "EMBEDDING_OOM",
+  "detail": "BGE-M3 out of memory — reduce chunk size or content length",
+  "request_id": "..."
+}
+```
+
+**Response (collection not found):**
+```json
+{
+  "success": false,
+  "error": "QDRANT_COLLECTION_NOT_FOUND",
+  "detail": "Collection 'wiener-neudorf' does not exist. Create it first via POST /collections/init",
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `collection_name` | string | Yes | — | Qdrant collection to store in |
+| `source_id` | string | Yes | — | Unique document ID (for updates/deletes) |
+| `file_path` | string | Yes | — | Original file path (SMB path or R2 key) |
+| `content` | string | Yes | — | Parsed text from `/local/parse` or `/local/parse/upload` |
+| `language` | string | No | auto-detect | ISO 639-1 language code |
+| `acl` | object | Yes | — | Access control list (see ACL object below) |
+| `metadata` | object | Yes | — | Document metadata (see Metadata object below) |
+| `chunking` | object | No | defaults | Chunking configuration (see Chunking config below) |
+
+### ACL object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `visibility` | string | Yes | `public`, `internal`, or `restricted` |
+| `allow_groups` | array | No | AD groups with access |
+| `deny_groups` | array | No | AD groups explicitly denied |
+| `allow_roles` | array | No | Portal roles with access |
+| `allow_users` | array | No | Specific user IDs |
+| `department` | string | No | Department tag |
+
+### Metadata object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | No | Document title (shown in search results) |
+| `uploaded_by` | string | No | User or service that uploaded |
+| `source_type` | string | No | `smb`, `r2`, or `web` |
+| `mime_type` | string | No | Original file MIME type |
+| `organization_id` | string | No | Organization/tenant ID |
+| `department` | string | No | Department within organization |
+
+### Chunking config
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `strategy` | string | `late_chunking` | `late_chunking` (paragraph-aware), `sentence`, or `fixed` |
+| `max_chunk_size` | int | 512 | Max chunk size in chars (64-4096) |
+| `overlap` | int | 50 | Overlap between chunks in chars (0-512) |
+
+### Error codes
+`VALIDATION_EMPTY_CONTENT`, `VALIDATION_ACL_REQUIRED`, `EMBEDDING_MODEL_NOT_LOADED`, `EMBEDDING_FAILED`, `EMBEDDING_OOM`, `QDRANT_CONNECTION_FAILED`, `QDRANT_COLLECTION_NOT_FOUND`, `QDRANT_UPSERT_FAILED`, `QDRANT_DISK_FULL`, `CLASSIFY_FAILED`
+
+---
+
+## `DELETE /api/v1/local/vectors/{source_id}`
+
+Remove all vectors for a document from a Qdrant collection.
+
+**Request:**
+```bash
+curl -X DELETE "https://your-domain/api/v1/local/vectors/doc_abc123?collection_name=wiener-neudorf"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "source_id": "doc_abc123",
+    "vectors_deleted": 8
+  },
+  "request_id": "..."
+}
+```
+
+**Response (connection failed):**
+```json
+{
+  "success": false,
+  "error": "QDRANT_CONNECTION_FAILED",
+  "detail": "Failed to connect to Qdrant",
+  "request_id": "..."
+}
+```
+
+### Error codes
+`QDRANT_CONNECTION_FAILED`, `QDRANT_DELETE_FAILED`
+
+---
+
+## `POST /api/v1/local/vectors/delete-by-filter`
+
+Delete vectors matching metadata filters. All filters are combined with **AND** logic — only points matching every condition are deleted.
+
+**Filterable metadata fields:** `source_id`, `source_type`, `classification`, `acl_visibility`, `acl_department`, `organization_id`, `department`, `language`, `uploaded_by`, `mime_type`, `title`
+
+### Case 1: Delete all vectors from a department
+
+**Request:**
+```bash
+curl -X POST "https://your-domain/api/v1/local/vectors/delete-by-filter" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "wiener-neudorf",
+    "filters": [
+      {"key": "acl_department", "value": "bauamt"}
+    ]
+  }'
+```
+
+### Case 2: Delete by source type and classification
+
+**Request:**
+```json
+{
+  "collection_name": "wiener-neudorf",
+  "filters": [
+    {"key": "source_type", "value": "smb"},
+    {"key": "classification", "value": "funding"}
+  ]
+}
+```
+
+### Case 3: Delete all vectors for an organization
+
+**Request:**
+```json
+{
+  "collection_name": "wiener-neudorf",
+  "filters": [
+    {"key": "organization_id", "value": "org_wiener_neudorf"}
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "vectors_deleted": 42,
+    "filters_applied": [
+      {"key": "source_type", "value": "smb"},
+      {"key": "classification", "value": "funding"}
+    ]
+  },
+  "request_id": "..."
+}
+```
+
+**Response (connection failed):**
+```json
+{
+  "success": false,
+  "error": "QDRANT_CONNECTION_FAILED",
+  "detail": "Failed to connect to Qdrant",
+  "request_id": "..."
+}
+```
+
+### Request fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `collection_name` | string | Yes | Qdrant collection to delete from |
+| `filters` | array | Yes | List of metadata conditions (AND logic, min 1) |
+| `filters[].key` | string | Yes | Metadata field name |
+| `filters[].value` | string | Yes | Exact value to match |
+
+### Error codes
+`QDRANT_CONNECTION_FAILED`, `QDRANT_DELETE_FAILED`
+
+---
+
+## `PUT /api/v1/local/vectors/update-acl`
+
+Update ACL permissions on existing vectors without re-embedding. Used when file permissions change on the source system.
+
+**Request:**
+```bash
+curl -X PUT "https://your-domain/api/v1/local/vectors/update-acl" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_name": "wiener-neudorf",
+    "source_id": "doc_abc123",
+    "acl": {
+      "allow_groups": ["DOMAIN\\Bauamt-Mitarbeiter", "DOMAIN\\Neue-Gruppe"],
+      "deny_groups": [],
+      "allow_roles": [],
+      "allow_users": [],
+      "department": "bauamt",
+      "visibility": "internal"
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "source_id": "doc_abc123",
+    "vectors_updated": 8
+  },
+  "request_id": "..."
+}
+```
+
+### Error codes
+`QDRANT_CONNECTION_FAILED`, `QDRANT_UPSERT_FAILED`
+
+---
+
 # Endpoint Summary
+
+## Shared Endpoints (no mode prefix)
 
 | Method | Endpoint | Purpose | Auth |
 |--------|----------|---------|------|
 | GET | `/api/v1/health` | Liveness probe | None |
 | GET | `/api/v1/ready` | Readiness probe | None / HMAC |
 | GET | `/metrics` | Prometheus metrics | None |
-| POST | `/api/v1/parse` | Parse document (URL, SMB, R2) | HMAC |
-| POST | `/api/v1/parse/upload` | Parse uploaded file | HMAC |
-| POST | `/api/v1/scrape` | Scrape webpage (Crawl4AI) | HMAC |
-| POST | `/api/v1/crawl` | Discover URLs from site/sitemap | HMAC |
-| POST | `/api/v1/discover` | Scan file sources for changes | HMAC |
 | POST | `/api/v1/classify` | Classify + extract entities | HMAC |
-| POST | `/api/v1/ingest` | Chunk + embed + store with ACL | HMAC |
 | POST | `/api/v1/search` | Permission-aware semantic search | HMAC |
-| DELETE | `/api/v1/vectors/{source_id}` | Delete document vectors | HMAC |
-| PUT | `/api/v1/vectors/update-acl` | Update ACL without re-embedding | HMAC |
 | POST | `/api/v1/collections/init` | Create Qdrant collection | HMAC |
 | GET | `/api/v1/collections/stats` | Collection statistics | HMAC |
+
+## Online Endpoints (`X-API-Key` required)
+
+| Method | Endpoint | Purpose | Auth |
+|--------|----------|---------|------|
+| POST | `/api/v1/online/scrape` | Scrape webpage (Crawl4AI) | HMAC + API Key |
+| POST | `/api/v1/online/crawl` | Discover URLs from site/sitemap | HMAC + API Key |
+| POST | `/api/v1/online/parse` | Parse document from URL | HMAC + API Key |
+| POST | `/api/v1/online/ingest` | Chunk + embed + store web content | HMAC + API Key |
+
+## Local Endpoints (trusted network)
+
+| Method | Endpoint | Purpose | Auth |
+|--------|----------|---------|------|
+| POST | `/api/v1/local/parse` | Parse document (SMB, R2) | HMAC |
+| POST | `/api/v1/local/parse/upload` | Parse uploaded file | HMAC |
+| POST | `/api/v1/local/discover` | Scan file sources for changes | HMAC |
+| POST | `/api/v1/local/ingest` | Chunk + embed + store local docs | HMAC |
+| DELETE | `/api/v1/local/vectors/{source_id}` | Delete document vectors | HMAC |
+| POST | `/api/v1/local/vectors/delete-by-filter` | Delete vectors by metadata filter | HMAC |
+| PUT | `/api/v1/local/vectors/update-acl` | Update ACL without re-embedding | HMAC |
 
 ---
 
@@ -1113,6 +1317,8 @@ GET /api/v1/collections/stats?collection_name=wiener-neudorf
 | **Auth** | `AUTH_MISSING` | X-Signature or X-Timestamp header missing |
 | | `AUTH_INVALID` | HMAC signature doesn't match |
 | | `AUTH_EXPIRED` | Timestamp outside ±5 min window |
+| | `AUTH_API_KEY_MISSING` | X-API-Key header missing on online endpoint |
+| | `AUTH_API_KEY_INVALID` | X-API-Key not in `DP_ONLINE_API_KEYS` |
 | **SMB** | `SMB_CONNECTION_FAILED` | Cannot connect to SMB share |
 | | `SMB_AUTH_FAILED` | SMB credentials rejected |
 | | `SMB_PATH_NOT_FOUND` | Share path doesn't exist |
