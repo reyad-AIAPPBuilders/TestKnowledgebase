@@ -56,6 +56,10 @@ class ExternalSettings(BaseSettings):
     crawl4ai_url: str = "http://crawl4ai:11235"
     crawl4ai_api_token: str = ""
 
+    # Jina Reader (fallback scraper)
+    jina_api_url: str = "https://eu-r-beta.jina.ai"
+    jina_api_key: str = ""
+
     # LlamaParse (cloud document parsing)
     llama_cloud_api_key: str = ""  # empty = use local unstructured parser
     llama_cloud_base_url: str = "https://api.cloud.llamaindex.ai/api/v1/parsing"  # EU: https://api.cloud.eu.llamaindex.ai/api/v1/parsing

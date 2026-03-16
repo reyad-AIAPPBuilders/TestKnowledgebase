@@ -42,12 +42,14 @@ class CrawlResult:
 
 
 class Crawl4AIClient:
-    """HTTP client wrapper for external Crawl4AI with httpx fallback."""
+    """HTTP client wrapper for external Crawl4AI with Jina Reader and httpx fallback."""
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
         self._base_url = ext.crawl4ai_url.rstrip("/")
         self._api_token = ext.crawl4ai_api_token
+        self._jina_url = ext.jina_api_url.rstrip("/")
+        self._jina_key = ext.jina_api_key
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(
@@ -55,7 +57,7 @@ class Crawl4AIClient:
             follow_redirects=True,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
-        log.info("crawl4ai_client_started", base_url=self._base_url)
+        log.info("crawl4ai_client_started", base_url=self._base_url, jina_fallback=bool(self._jina_key))
 
     async def close(self) -> None:
         if self._client:
@@ -104,6 +106,19 @@ class Crawl4AIClient:
 
             mark_crawl4ai("failed", time.monotonic() - start)
 
+        # Fallback 2: Jina Reader API
+        if self._jina_key:
+            try:
+                result = await self._scrape_with_jina(url, timeout=req_timeout)
+                result.duration_ms = int((time.monotonic() - start) * 1000)
+                if result.success:
+                    log.info("jina_fallback_success", url=url)
+                    return result
+                log.warning("jina_fallback_failed", url=url, error=result.error)
+            except Exception as exc:
+                log.warning("jina_fallback_error", url=url, error=str(exc))
+
+        # Fallback 3: Raw httpx
         result = await self._scrape_with_httpx(url, css_selector=css_selector, timeout=req_timeout)
         result.duration_ms = int((time.monotonic() - start) * 1000)
         return result
@@ -167,6 +182,38 @@ class Crawl4AIClient:
         error = _extract_error(result_data)
 
         return CrawlResult(markdown=clean_markdown(markdown), html=html, success=success, error=error)
+
+    async def _scrape_with_jina(self, url: str, *, timeout: int = 30) -> CrawlResult:
+        """Scrape a URL via Jina Reader API — returns Markdown directly."""
+        headers = {
+            "Authorization": f"Bearer {self._jina_key}",
+            "Accept": "application/json",
+            "X-Return-Format": "markdown",
+        }
+
+        try:
+            resp = await self._client.get(  # type: ignore[union-attr]
+                f"{self._jina_url}/{url}",
+                headers=headers,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+        except httpx.TimeoutException:
+            return CrawlResult(success=False, error=f"Jina timeout after {timeout}s")
+        except httpx.HTTPStatusError as exc:
+            return CrawlResult(success=False, error=f"Jina HTTP {exc.response.status_code}")
+        except Exception as exc:
+            return CrawlResult(success=False, error=f"Jina error: {exc}")
+
+        data = resp.json()
+        content = data.get("data", {}).get("content", "")
+        title = data.get("data", {}).get("title", "")
+
+        if not content.strip():
+            return CrawlResult(success=False, error="Jina returned empty content")
+
+        markdown = clean_markdown(content)
+        return CrawlResult(markdown=markdown, html="", success=True)
 
     async def _scrape_with_httpx(self, url: str, *, css_selector: str | None = None, timeout: int = 30) -> CrawlResult:
         headers = {
